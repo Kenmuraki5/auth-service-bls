@@ -1,4 +1,4 @@
-module auth-service-bls
+module github.com/Kenmuraki5/auth-service-bls
 
 go 1.22.3
 
