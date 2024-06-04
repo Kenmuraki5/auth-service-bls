@@ -5,7 +5,7 @@ import (
 	"log"
 	"net"
 
-	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth/authpb"
+	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
 
 	"github.com/Kenmuraki5/auth-service-bls/db"
 	"github.com/Kenmuraki5/auth-service-bls/models"
