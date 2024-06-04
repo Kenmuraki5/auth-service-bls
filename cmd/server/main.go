@@ -5,10 +5,10 @@ import (
 	"log"
 	"net"
 
-	pb "auth-service/protogen/golang/auth/authpb"
+	pb "auth-service-bls/protogen/golang/auth/authpb"
 
-	"auth-service/db"
-	"auth-service/models"
+	"auth-service-bls/db"
+	"auth-service-bls/models"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/jinzhu/gorm"

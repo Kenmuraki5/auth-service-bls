@@ -1,4 +1,4 @@
-module auth-service
+module auth-service-bls
 
 go 1.22.3
 
