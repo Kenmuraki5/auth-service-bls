@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
 
@@ -18,10 +19,11 @@ import (
 
 type server struct {
 	pb.UnimplementedAuthServiceServer
-	db *gorm.DB
+	db     *gorm.DB
+	jwtKey []byte
 }
 
-var jwtKey = []byte("my_secret_key")
+// var jwtKey = []byte("my_secret_key")
 
 type Claims struct {
 	Email string `json:"email"`
@@ -69,7 +71,7 @@ func (s *server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResp
 		Role:  user.Role,
 	})
 
-	tokenString, err := token.SignedString(jwtKey)
+	tokenString, err := token.SignedString(s.jwtKey)
 	if err != nil {
 		return &pb.LoginResponse{Success: false, Message: "Error generating token"}, nil
 	}
@@ -79,7 +81,7 @@ func (s *server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResp
 
 func (s *server) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
 	token, err := jwt.ParseWithClaims(req.Token, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
+		return s.jwtKey, nil
 	})
 	if err != nil {
 		return &pb.AuthResponse{Success: false, Message: "Invalid token"}, nil
@@ -107,24 +109,23 @@ func (s *server) ChangeRole(ctx context.Context, req *pb.ChangeRoleRequest) (*pb
 }
 
 func main() {
-	// Connect to the database
+	jwtKey := []byte(os.Getenv("JWT_KEY"))
+
 	db, err := db.NewDB()
 	if err != nil {
 		panic("failed to connect to database")
 	}
 	defer db.Close()
 
-	// Migrate the schema
 	db.AutoMigrate(&models.User{})
 
-	// Listen for incoming gRPC requests
 	lis, err := net.Listen("tcp", ":50053")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterAuthServiceServer(s, &server{db: db})
+	pb.RegisterAuthServiceServer(s, &server{db: db, jwtKey: jwtKey})
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
