@@ -2,122 +2,113 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"log"
+	"math/big"
 	"net"
-	"os"
+	"net/http"
+	"strings"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
-
-	"github.com/Kenmuraki5/auth-service-bls/db"
-	"github.com/Kenmuraki5/auth-service-bls/models"
-
 	"github.com/dgrijalva/jwt-go"
-	"github.com/jinzhu/gorm"
-	"golang.org/x/crypto/bcrypt"
+
 	"google.golang.org/grpc"
 )
 
 type server struct {
 	pb.UnimplementedAuthServiceServer
-	db     *gorm.DB
-	jwtKey []byte
 }
 
-// var jwtKey = []byte("my_secret_key")
-
-type Claims struct {
-	Email string `json:"email"`
-	Role  string `json:"role"`
-	jwt.StandardClaims
-}
-
-func (s *server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return &pb.RegisterResponse{Success: false, Message: "Error hashing password"}, nil
-	}
-
-	// Assign role based on the request
-	role := "user" // Default role
-	if req.Role != "" {
-		role = req.Role
-	}
-
-	user := models.User{
-		Email:    req.Email,
-		Password: string(hashedPassword),
-		Role:     role,
-	}
-
-	if err := s.db.Create(&user).Error; err != nil {
-		return &pb.RegisterResponse{Success: false, Message: "User already exists"}, nil
-	}
-
-	return &pb.RegisterResponse{Success: true, Message: "User registered successfully"}, nil
-}
-
-func (s *server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
-	var user models.User
-	if err := s.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		return &pb.LoginResponse{Success: false, Message: "User not found"}, nil
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		return &pb.LoginResponse{Success: false, Message: "Incorrect password"}, nil
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{
-		Email: user.Email,
-		Role:  user.Role,
-	})
-
-	tokenString, err := token.SignedString(s.jwtKey)
-	if err != nil {
-		return &pb.LoginResponse{Success: false, Message: "Error generating token"}, nil
-	}
-
-	return &pb.LoginResponse{Success: true, Token: tokenString, Message: "Login successful"}, nil
-}
+var (
+	jwkSetURL  = "https://login.microsoftonline.com/your-tenant-id/discovery/v2.0/keys"
+	publicKeys map[string]*rsa.PublicKey
+)
 
 func (s *server) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
-	token, err := jwt.ParseWithClaims(req.Token, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return s.jwtKey, nil
+	authHeader := req.Token
+	if authHeader == "" {
+		return &pb.AuthResponse{Success: false, Message: "Invalid token"}, nil
+	}
+	tokenParts := strings.Split(authHeader, " ")
+	if len(tokenParts) != 2 {
+		return &pb.AuthResponse{Success: false, Message: "Mailformed token"}, nil
+	}
+
+	token := tokenParts[1]
+
+	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		kid := token.Header["kid"].(string)
+		key, ok := publicKeys[kid]
+		if !ok {
+			return nil, fmt.Errorf("no matching key found for kid: %s", kid)
+		}
+		return key, nil
 	})
 	if err != nil {
-		return &pb.AuthResponse{Success: false, Message: "Invalid token"}, nil
+		return &pb.AuthResponse{Success: false, Message: fmt.Sprintf("Token validation failed: %v", err)}, nil
 	}
-
-	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		return &pb.AuthResponse{Success: true, Message: "Authenticated as " + claims.Email + " with role " + claims.Role}, nil
-	} else {
-		return &pb.AuthResponse{Success: false, Message: "Invalid token"}, nil
+	if !parsedToken.Valid {
+		return &pb.AuthResponse{Success: false, Message: "Token is not valid"}, nil
 	}
+	return &pb.AuthResponse{Success: true, Message: "Token is valid"}, nil
 }
 
-func (s *server) ChangeRole(ctx context.Context, req *pb.ChangeRoleRequest) (*pb.ChangeRoleResponse, error) {
-	var user models.User
-	if err := s.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		return &pb.ChangeRoleResponse{Success: false, Message: "User not found"}, nil
+func getPublicKeys() (map[string]*rsa.PublicKey, error) {
+	resp, err := http.Get(jwkSetURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get JWKS: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var jwks struct {
+		Keys []struct {
+			Kid string `json:"kid"`
+			E   string `json:"e"`
+			N   string `json:"n"`
+		} `json:"keys"`
 	}
 
-	user.Role = req.NewRole
-	if err := s.db.Save(&user).Error; err != nil {
-		return &pb.ChangeRoleResponse{Success: false, Message: "Failed to update role"}, nil
+	err = json.NewDecoder(resp.Body).Decode(&jwks)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode JWKS: %v", err)
 	}
 
-	return &pb.ChangeRoleResponse{Success: true, Message: "Role updated successfully"}, nil
+	keys := make(map[string]*rsa.PublicKey)
+	for _, jwk := range jwks.Keys {
+		nBytes, err := base64.RawURLEncoding.DecodeString(jwk.N)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode N: %v", err)
+		}
+		eBytes, err := base64.RawURLEncoding.DecodeString(jwk.E)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode E: %v", err)
+		}
+		e := 0
+		for _, b := range eBytes {
+			e = e*256 + int(b)
+		}
+		key := &rsa.PublicKey{
+			N: new(big.Int).SetBytes(nBytes),
+			E: e,
+		}
+		keys[jwk.Kid] = key
+	}
+
+	return keys, nil
 }
 
 func main() {
-	jwtKey := []byte(os.Getenv("JWT_KEY"))
-
-	db, err := db.NewDB()
+	var err error
+	publicKeys, err = getPublicKeys()
 	if err != nil {
-		panic("failed to connect to database")
+		log.Fatalf("Failed to get public keys: %v", err)
 	}
-	defer db.Close()
-
-	db.AutoMigrate(&models.User{})
 
 	lis, err := net.Listen("tcp", ":50053")
 	if err != nil {
@@ -125,7 +116,7 @@ func main() {
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterAuthServiceServer(s, &server{db: db, jwtKey: jwtKey})
+	pb.RegisterAuthServiceServer(s, &server{})
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
