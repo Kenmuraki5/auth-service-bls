@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
+	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/microsoft"
 
@@ -16,48 +18,65 @@ import (
 )
 
 var (
-	clientID     = "your-client-id"
-	clientSecret = "your-client-secret"
-	redirectURI  = "http://localhost:8080/callback" // Your redirect URI registered in Azure AD
-	scopes       = []string{"openid", "profile", "email", "offline_access", "User.Read"}
-	oauthConfig  = oauth2.Config{
+	clientID            string
+	clientSecret        string
+	redirectURI         string
+	authServiceEndpoint string
+	scopes              = []string{"openid", "profile", "email", "offline_access", "User.Read"}
+	oauthConfig         oauth2.Config
+)
+
+func init() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatalf("Error loading .env file: %v", err)
+	}
+
+	clientID = os.Getenv("CLIENT_ID")
+	clientSecret = os.Getenv("CLIENT_SECRET")
+	redirectURI = os.Getenv("REDIRECT_URI")
+	authServiceEndpoint = os.Getenv("AUTH_SERVICE_ENDPOINT")
+
+	oauthConfig = oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURI,
-		Endpoint:     microsoft.AzureADEndpoint("your-tenant-id"), // Replace with your Azure AD tenant ID
+		Endpoint:     microsoft.AzureADEndpoint("fa8b441f-6c27-4ca8-aead-bc3294584cd9"),
 		Scopes:       scopes,
 	}
-)
+}
 
 func run() error {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	mux := runtime.NewServeMux()
+	gwmux := runtime.NewServeMux()
 	opts := []grpc.DialOption{grpc.WithInsecure()}
 
-	err := pb.RegisterAuthServiceHandlerFromEndpoint(ctx, mux, "localhost:50053", opts)
+	err := pb.RegisterAuthServiceHandlerFromEndpoint(ctx, gwmux, authServiceEndpoint, opts)
 	if err != nil {
 		return err
 	}
+
+	sm := http.NewServeMux()
+	sm.Handle("/authpb.AuthService/", gwmux)
+	sm.HandleFunc("/login", handleLogin)
+	sm.HandleFunc("/callback", handleCallback)
+	sm.HandleFunc("/logout", handleLogout)
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000"},
 		AllowCredentials: true,
 	})
 
-	sm := http.NewServeMux()
-	sm.HandleFunc("/", handleLogin)
-	sm.HandleFunc("/callback", handleCallback)
-	// sm.HandleFunc("/secure", handleSecure)
-	handler := c.Handler(mux)
+	handler := c.Handler(sm)
 	log.Println("Starting HTTP/JSON gateway on port 8082")
 	return http.ListenAndServe(":8082", handler)
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
-	authURL := oauthConfig.AuthCodeURL("state")
+	authURL := oauthConfig.AuthCodeURL("state", oauth2.AccessTypeOffline)
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
@@ -81,10 +100,18 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "http://localhost:3000", http.StatusSeeOther)
 }
 
-// func handleSecure(w http.ResponseWriter, r *http.Request) {
-// 	w.WriteHeader(http.StatusOK)
-// 	w.Write([]byte("Access granted!"))
-// }
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "auth_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1, // Expire immediately
+	})
+
+	logoutURL := fmt.Sprintf("https://login.microsoftonline.com/common/oauth2/v2.0/logout?post_logout_redirect_uri=%s", redirectURI)
+	http.Redirect(w, r, logoutURL, http.StatusSeeOther)
+}
 
 func main() {
 	if err := run(); err != nil {

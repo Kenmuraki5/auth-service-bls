@@ -14,7 +14,6 @@ import (
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
 	"github.com/dgrijalva/jwt-go"
-
 	"google.golang.org/grpc"
 )
 
@@ -23,18 +22,18 @@ type server struct {
 }
 
 var (
-	jwkSetURL  = "https://login.microsoftonline.com/your-tenant-id/discovery/v2.0/keys"
+	jwkSetURL  = "https://login.microsoftonline.com/fa8b441f-6c27-4ca8-aead-bc3294584cd9/discovery/v2.0/keys"
 	publicKeys map[string]*rsa.PublicKey
 )
 
 func (s *server) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
 	authHeader := req.Token
 	if authHeader == "" {
-		return &pb.AuthResponse{Success: false, Message: "Invalid token"}, nil
+		return &pb.AuthResponse{Success: false, Message: "Authorization token is required"}, nil
 	}
 	tokenParts := strings.Split(authHeader, " ")
-	if len(tokenParts) != 2 {
-		return &pb.AuthResponse{Success: false, Message: "Mailformed token"}, nil
+	if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+		return &pb.AuthResponse{Success: false, Message: "Malformed token"}, nil
 	}
 
 	token := tokenParts[1]
@@ -43,7 +42,10 @@ func (s *server) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.Aut
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		kid := token.Header["kid"].(string)
+		kid, ok := token.Header["kid"].(string)
+		if !ok {
+			return nil, fmt.Errorf("kid not found in token header")
+		}
 		key, ok := publicKeys[kid]
 		if !ok {
 			return nil, fmt.Errorf("no matching key found for kid: %s", kid)
@@ -56,6 +58,7 @@ func (s *server) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.Aut
 	if !parsedToken.Valid {
 		return &pb.AuthResponse{Success: false, Message: "Token is not valid"}, nil
 	}
+
 	return &pb.AuthResponse{Success: true, Message: "Token is valid"}, nil
 }
 
@@ -98,6 +101,7 @@ func getPublicKeys() (map[string]*rsa.PublicKey, error) {
 			E: e,
 		}
 		keys[jwk.Kid] = key
+		fmt.Printf("Loaded key %s\n", jwk.Kid)
 	}
 
 	return keys, nil
@@ -106,6 +110,7 @@ func getPublicKeys() (map[string]*rsa.PublicKey, error) {
 func main() {
 	var err error
 	publicKeys, err = getPublicKeys()
+	fmt.Println(publicKeys)
 	if err != nil {
 		log.Fatalf("Failed to get public keys: %v", err)
 	}
