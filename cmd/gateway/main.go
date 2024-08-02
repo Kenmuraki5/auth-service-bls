@@ -8,7 +8,6 @@ import (
 	"os"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
-	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/microsoft"
 
@@ -27,11 +26,6 @@ var (
 )
 
 func init() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
-	}
-
 	clientID = os.Getenv("CLIENT_ID")
 	clientSecret = os.Getenv("CLIENT_SECRET")
 	redirectURI = os.Getenv("REDIRECT_URI")
