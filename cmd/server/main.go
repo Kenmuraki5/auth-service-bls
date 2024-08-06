@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"google.golang.org/grpc"
 )
 
@@ -22,7 +22,7 @@ type server struct {
 }
 
 var (
-	jwkSetURL  = "https://login.microsoftonline.com/fa8b441f-6c27-4ca8-aead-bc3294584cd9/discovery/v2.0/keys"
+	jwkSetURL  = "https://login.microsoftonline.com/06ea85c4-63ba-43bf-8e3b-4705681e959c/discovery/v2.0/keys"
 	publicKeys map[string]*rsa.PublicKey
 )
 
@@ -59,7 +59,40 @@ func (s *server) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.Aut
 		return &pb.AuthResponse{Success: false, Message: "Token is not valid"}, nil
 	}
 
-	return &pb.AuthResponse{Success: true, Message: "Token is valid"}, nil
+	claims, ok := parsedToken.Claims.(jwt.MapClaims)
+	if !ok {
+		return &pb.AuthResponse{Success: false, Message: "Token claims are not valid"}, nil
+	}
+
+	roles, err := extractRoles(claims)
+	if err != nil {
+		return &pb.AuthResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	return &pb.AuthResponse{Success: true, Message: "Token is valid", Roles: roles}, nil
+}
+
+func extractRoles(claims jwt.MapClaims) ([]string, error) {
+	roleClaim, ok := claims["roles"]
+	if !ok {
+		return nil, fmt.Errorf("roles claim not found")
+	}
+
+	roleSlice, ok := roleClaim.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("roles claim is not a slice")
+	}
+
+	roles := make([]string, len(roleSlice))
+	for i, role := range roleSlice {
+		roleStr, ok := role.(string)
+		if !ok {
+			return nil, fmt.Errorf("role is not a string")
+		}
+		roles[i] = roleStr
+	}
+
+	return roles, nil
 }
 
 func getPublicKeys() (map[string]*rsa.PublicKey, error) {
@@ -110,7 +143,6 @@ func getPublicKeys() (map[string]*rsa.PublicKey, error) {
 func main() {
 	var err error
 	publicKeys, err = getPublicKeys()
-	fmt.Println(publicKeys)
 	if err != nil {
 		log.Fatalf("Failed to get public keys: %v", err)
 	}
