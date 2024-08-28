@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
 	"golang.org/x/oauth2"
@@ -20,21 +22,22 @@ var (
 	clientSecret        string
 	redirectURI         string
 	authServiceEndpoint string
-	scopes              = []string{"api://11cc4082-999e-4685-8d91-4b0841455042/Custom.Read"}
+	scopes              []string
 	oauthConfig         oauth2.Config
 )
 
 func init() {
-	clientID = "11cc4082-999e-4685-8d91-4b0841455042"
-	clientSecret = "2md8Q~TuHUwBQgS1dnkEDzbwK~QgAWrtndnFvafp"
-	redirectURI = "http://localhost:8082/callback"
-	authServiceEndpoint = "localhost:50053"
+	clientID = os.Getenv("CLIENT_ID")
+	clientSecret = os.Getenv("CLIENT_SECRET")
+	redirectURI = os.Getenv("REDIRECT_URI")
+	authServiceEndpoint = os.Getenv("AUTH_SERVICE_ENDPOINT")
+	scopes = []string{os.Getenv("SCOPE"), "offline_access"}
 
 	oauthConfig = oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURI,
-		Endpoint:     microsoft.AzureADEndpoint("06ea85c4-63ba-43bf-8e3b-4705681e959c"),
+		Endpoint:     microsoft.AzureADEndpoint("fa8b441f-6c27-4ca8-aead-bc3294584cd9"),
 		Scopes:       scopes,
 	}
 }
@@ -57,6 +60,7 @@ func run() error {
 	sm.HandleFunc("/login", handleLogin)
 	sm.HandleFunc("/callback", handleCallback)
 	sm.HandleFunc("/logout", handleLogout)
+	sm.HandleFunc("/refresh-token", handleRefreshToken)
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000"},
@@ -83,6 +87,11 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if token.RefreshToken == "" {
+		http.Error(w, "Refresh token is missing", http.StatusInternalServerError)
+		return
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "auth_token",
 		Value:    token.AccessToken,
@@ -90,7 +99,48 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 	})
 
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    token.RefreshToken,
+		Path:     "/",
+		HttpOnly: true,
+	})
+
 	http.Redirect(w, r, "http://localhost:3000", http.StatusSeeOther)
+}
+
+func handleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	var requestBody struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if requestBody.RefreshToken == "" {
+		http.Error(w, "Refresh token is required", http.StatusBadRequest)
+		return
+	}
+
+	refreshedToken, err := refreshToken(requestBody.RefreshToken)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	response := map[string]string{
+		"access_token":  refreshedToken.AccessToken,
+		"refresh_token": refreshedToken.RefreshToken,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func refreshToken(refreshToken string) (*oauth2.Token, error) {
+	tokenSource := oauthConfig.TokenSource(context.Background(), &oauth2.Token{RefreshToken: refreshToken})
+	return tokenSource.Token()
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +149,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		MaxAge:   -1, // Expire immediately
+		MaxAge:   -1,
 	})
 
 	logoutURL := fmt.Sprintf("https://login.microsoftonline.com/common/oauth2/v2.0/logout?post_logout_redirect_uri=%s", redirectURI)
