@@ -22,6 +22,7 @@ var (
 	clientSecret        string
 	redirectURI         string
 	authServiceEndpoint string
+	tenantID            string
 	scopes              []string
 	oauthConfig         oauth2.Config
 )
@@ -32,12 +33,13 @@ func init() {
 	redirectURI = os.Getenv("REDIRECT_URI")
 	authServiceEndpoint = os.Getenv("AUTH_SERVICE_ENDPOINT")
 	scopes = []string{os.Getenv("SCOPE"), "offline_access"}
+	tenantID = os.Getenv("TENANT_ID")
 
 	oauthConfig = oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURI,
-		Endpoint:     microsoft.AzureADEndpoint("fa8b441f-6c27-4ca8-aead-bc3294584cd9"),
+		Endpoint:     microsoft.AzureADEndpoint(tenantID),
 		Scopes:       scopes,
 	}
 }
