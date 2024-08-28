@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
@@ -22,8 +23,8 @@ type server struct {
 }
 
 var (
-	jwkSetURL  = "https://login.microsoftonline.com/06ea85c4-63ba-43bf-8e3b-4705681e959c/discovery/v2.0/keys"
 	publicKeys map[string]*rsa.PublicKey
+	jwkSetURL  string
 )
 
 func (s *server) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
@@ -141,6 +142,13 @@ func getPublicKeys() (map[string]*rsa.PublicKey, error) {
 }
 
 func main() {
+	tenantID := os.Getenv("TENANT_ID")
+	if tenantID == "" {
+		log.Fatal("TENANT_ID environment variable is not set")
+	}
+
+	jwkSetURL = fmt.Sprintf("https://login.microsoftonline.com/%s/discovery/v2.0/keys", tenantID)
+
 	var err error
 	publicKeys, err = getPublicKeys()
 	if err != nil {
