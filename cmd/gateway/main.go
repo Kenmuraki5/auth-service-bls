@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	pb "github.com/Kenmuraki5/auth-service-bls/protogen/golang/auth"
 	"golang.org/x/oauth2"
@@ -132,6 +133,31 @@ func handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	authTokenCookie := &http.Cookie{
+		Name:     "auth_token",
+		Value:    refreshedToken.AccessToken,
+		Path:     "/",
+		Domain:   "localhost",
+		Expires:  time.Now().Add(120 * time.Minute),
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+	}
+
+	refreshTokenCookie := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshedToken.RefreshToken,
+		Path:     "/",
+		Domain:   "localhost",
+		Expires:  time.Now().Add(7 * 24 * time.Hour),
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+	}
+
+	http.SetCookie(w, authTokenCookie)
+	http.SetCookie(w, refreshTokenCookie)
+
 	response := map[string]string{
 		"access_token":  refreshedToken.AccessToken,
 		"refresh_token": refreshedToken.RefreshToken,
@@ -141,8 +167,16 @@ func handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func refreshToken(refreshToken string) (*oauth2.Token, error) {
-	tokenSource := oauthConfig.TokenSource(context.Background(), &oauth2.Token{RefreshToken: refreshToken})
-	return tokenSource.Token()
+	tokenSource := oauthConfig.TokenSource(context.Background(), &oauth2.Token{
+		RefreshToken: refreshToken,
+	})
+
+	newToken, err := tokenSource.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	return newToken, nil
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
