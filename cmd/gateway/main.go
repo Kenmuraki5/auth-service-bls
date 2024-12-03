@@ -68,7 +68,7 @@ func run() error {
 	sm.HandleFunc("/refresh-token", handleRefreshToken)
 
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{redirectURI},
+		AllowedOrigins:   []string{"*"},
 		AllowCredentials: true,
 	})
 
