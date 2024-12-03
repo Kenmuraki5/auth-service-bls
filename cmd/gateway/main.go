@@ -22,6 +22,7 @@ var (
 	clientID            string
 	clientSecret        string
 	callbackURI         string
+	redirectURI         string
 	authServiceEndpoint string
 	tenantID            string
 	scopes              []string
@@ -31,7 +32,8 @@ var (
 func init() {
 	clientID = os.Getenv("CLIENT_ID")
 	clientSecret = os.Getenv("CLIENT_SECRET")
-	callbackURI = os.Getenv("REDIRECT_URI")
+	callbackURI = os.Getenv("CALLBACK_URI")
+	redirectURI = os.Getenv("REDIRECT_URI")
 	authServiceEndpoint = os.Getenv("AUTH_SERVICE_ENDPOINT")
 	scopes = []string{os.Getenv("SCOPE"), "offline_access"}
 	tenantID = os.Getenv("TENANT_ID")
@@ -66,7 +68,7 @@ func run() error {
 	sm.HandleFunc("/refresh-token", handleRefreshToken)
 
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedOrigins:   []string{redirectURI},
 		AllowCredentials: true,
 	})
 
@@ -109,7 +111,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 	})
 
-	http.Redirect(w, r, "http://localhost:3000", http.StatusSeeOther)
+	http.Redirect(w, r, redirectURI, http.StatusSeeOther)
 }
 
 func handleRefreshToken(w http.ResponseWriter, r *http.Request) {
