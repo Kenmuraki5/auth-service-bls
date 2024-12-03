@@ -21,7 +21,7 @@ import (
 var (
 	clientID            string
 	clientSecret        string
-	redirectURI         string
+	callbackURI         string
 	authServiceEndpoint string
 	tenantID            string
 	scopes              []string
@@ -31,7 +31,7 @@ var (
 func init() {
 	clientID = os.Getenv("CLIENT_ID")
 	clientSecret = os.Getenv("CLIENT_SECRET")
-	redirectURI = os.Getenv("REDIRECT_URI")
+	callbackURI = os.Getenv("REDIRECT_URI")
 	authServiceEndpoint = os.Getenv("AUTH_SERVICE_ENDPOINT")
 	scopes = []string{os.Getenv("SCOPE"), "offline_access"}
 	tenantID = os.Getenv("TENANT_ID")
@@ -39,7 +39,7 @@ func init() {
 	oauthConfig = oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		RedirectURL:  redirectURI,
+		RedirectURL:  callbackURI,
 		Endpoint:     microsoft.AzureADEndpoint(tenantID),
 		Scopes:       scopes,
 	}
@@ -188,7 +188,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 	})
 
-	logoutURL := fmt.Sprintf("https://login.microsoftonline.com/common/oauth2/v2.0/logout?post_logout_redirect_uri=%s", redirectURI)
+	logoutURL := fmt.Sprintf("https://login.microsoftonline.com/common/oauth2/v2.0/logout?post_logout_redirect_uri=%s", callbackURI)
 	http.Redirect(w, r, logoutURL, http.StatusSeeOther)
 }
 
